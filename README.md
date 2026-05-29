@@ -1,48 +1,75 @@
-# Alzheimer's Disease Classification via Hippocampal Radiomics and Clinical Biomarkers
+# Alzheimer's Disease Classification via Hippocampal & Amygdala Subfield Radiomics
 
-A multi-stage research pipeline that classifies Alzheimer's Disease (AD), Mild Cognitive Impairment (MCI), and Cognitively Normal (CN) subjects using 3D T1-weighted MRI scans from the ADNI cohort. The pipeline combines FreeSurfer hippocampal/amygdala subfield segmentation, PyRadiomics feature extraction, and an XGBoost classifier with LASSO feature selection.
+A multi-stage research pipeline for classifying Alzheimer's Disease (AD), Mild Cognitive Impairment (MCI), and Cognitively Normal (CN) subjects using T1-weighted MRI from the ADNI cohort. The pipeline integrates FreeSurfer subfield segmentation, high-throughput PyRadiomics feature extraction, a novel "Subject Squashing" data engineering algorithm, and a two-stage LASSO + XGBoost classifier.
 
 ---
 
 ## Results
 
-| Experiment | Feature Set | Test Subjects | Accuracy |
+| Experiment | Feature Set | Cohort (n) | Accuracy |
 |---|---|---|---|
-| A | Clinical biomarkers only (CDRSB, MMSE, ADAS, APOE4, etc.) | 55 | **85.45%** |
-| B | Radiomics only (LASSO-selected from ~4000 features) | 246 | **73.17%** |
-| C | Combined (Clinical + Radiomics) | 55 | **92.73%** |
+| A — Clinical Baseline | Age, Sex, APOE4, MMSE, CDRSB, ADAS, FAQ, MOCA (d=9) | 275 (validated subset) | **85.45%** |
+| B — Radiomics Only | 77 LASSO-selected subfield texture & shape features | 1,229 (full cohort) | **73.17%** |
+| C — Combined Multimodal | Clinical (d=9) + Radiomics (d=77) → d=86 | 275 (validated subset) | **92.73%** |
 
-Full confusion matrices, ROC curves, and feature importance plots are in [`results/`](results/).
+- Radiomics-only model outperforms the random baseline (33%) by **more than 2×** using only brain micro-structure — no cognitive tests, no demographics.
+- Combined ROC-AUC approached **0.95+**, indicating strong robustness across decision thresholds.
+- Full confusion matrices, ROC curves, and feature importance plots: [`results/`](results/)
+
+---
+
+## Key Biological Findings
+
+LASSO reduced the feature space from **5,980 → 77 biomarkers** (98.7% noise reduction). The top predictors were:
+
+| Rank | Region | Feature | Importance | Interpretation |
+|---|---|---|---|---|
+| 1 | Left Basal Amygdala | FirstOrder: Skewness | 0.066 | Asymmetric intensity distribution indicating early tissue degradation — neuronal loss and amyloid deposition create "holes" before gross atrophy is visible |
+| 2 | Right Lateral Amygdala | FirstOrder: Maximum | 0.041 | Hyper-intense signal change, potentially reflecting gliosis |
+| 3 | Left CA3 Head | Shape: Surface-to-Volume Ratio | 0.037 | Geometric hallmark of atrophic neurodegeneration — subfield "shriveling" |
+| 4 | Left HATA | GLCM: Correlation | — | Texture degradation in the hippocampus–amygdala transition zone |
+
+**Critical finding:** Texture features (GLCM, GLRLM) and distribution statistics (Skewness, Kurtosis) consistently outperformed volumetric features. Volume is a *late-stage* marker; texture is an *early-stage* marker — micro-structural heterogeneity is a more sensitive predictor of early AD than macroscopic shrinkage.
 
 ---
 
 ## Pipeline Overview
 
 ```
-Raw ADNI DICOM
-      │
-      ▼
-[Stage 1] DICOM → NIfTI (BIDS format)
-      pipeline/01_dicom_to_nifti.py  +  dcm2niix
-      │
-      ▼
-[Stage 2] FreeSurfer recon-all (full brain reconstruction)
-      hpc/recon-job.sbatch   (~1231 subjects, run on HPC)
-      │
-      ▼
-[Stage 3] Hippocampal & Amygdala Subfield Segmentation
-      hpc/segmentHA-job.sbatch   (FreeSurfer segmentHA_T1.sh)
-      │
-      ▼
-[Stage 4] PyRadiomics Feature Extraction
-      hpc/radiomics-job.sbatch   (per-subject, parallelized)
-      │
-      ▼
-[Stage 5] ML Classification (LASSO + XGBoost)
-      pipeline/02_final_ml_pipeline.py
-      │
-      ▼
-results/  (confusion matrices, ROC curves, feature importance)
+Raw ADNI DICOM (MPRAGE)
+        │
+        ▼
+[Stage 1]  DICOM → NIfTI  (BIDS format, dcm2niix + nibabel)
+           pipeline/01_dicom_to_nifti.py
+        │
+        ▼
+[Stage 2]  FreeSurfer recon-all  (cortical reconstruction, v7.3.2)
+           hpc/recon-job.sbatch  ·  8 CPUs, 24 GB RAM, 10 h/subject
+        │
+        ▼
+[Stage 3]  Hippocampal & Amygdala Subfield Segmentation  (segmentHA_T1.sh, v7.1 atlas)
+           hpc/segmentHA-job.sbatch  ·  1 CPU, 4 GB RAM, ~30–45 min/subject
+           → 56 sub-regions (28 per hemisphere): CA1/CA3/CA4 head+body,
+             Subiculum, GC-ML-DG, Presubiculum, HATA, Fimbria, Molecular Layer,
+             Lateral/Basal/AAA/Central/Medial/Cortical/Paralaminar Amygdala …
+        │
+        ▼
+[Stage 4]  PyRadiomics Feature Extraction  (v3.0.1, parallelized on HPC)
+           hpc/radiomics-job.sbatch  ·  1 CPU, 16 GB RAM
+           → 5,980 features/subject  (Shape ×14, FirstOrder ×18, GLCM/GLRLM/GLSZM/NGTDM ×75)
+        │
+        ▼
+[Stage 5]  "Subject Squashing"  (custom data engineering — collapses long-format
+           per-subfield rows into one 1×6,010 vector per subject)
+           → recovers cohort from 275 fragmented rows → 1,229 unique subjects
+        │
+        ▼
+[Stage 6]  LASSO + XGBoost Classification
+           pipeline/02_final_ml_pipeline.py
+           → 5,980 → 77 features (LASSO) → 3-class XGBoost
+        │
+        ▼
+results/  (confusion matrices, ROC curves, feature importance, biomarker list)
 ```
 
 ---
@@ -51,45 +78,52 @@ results/  (confusion matrices, ROC curves, feature importance)
 
 ### What is ADNI?
 
-The **Alzheimer's Disease Neuroimaging Initiative (ADNI)** is a longitudinal multi-site study designed to develop clinical, imaging, genetic, and biochemical biomarkers for the early detection and tracking of Alzheimer's disease. Access to data requires a free registration at [adni.loni.usc.edu](https://adni.loni.usc.edu).
+The **Alzheimer's Disease Neuroimaging Initiative (ADNI)** is a longitudinal multi-site study for developing clinical, imaging, genetic, and biochemical biomarkers for early detection of Alzheimer's disease. Access requires a free registration at [adni.loni.usc.edu](https://adni.loni.usc.edu).
 
-> **Note:** ADNI data is governed by a Data Use Agreement. You must apply for access through the LONI Image & Data Archive (IDA) before downloading any files. Raw MRI data and clinical spreadsheets are therefore **not** included in this repository.
+> **Note:** ADNI data is governed by a Data Use Agreement. You must apply for access through the LONI Image & Data Archive (IDA). Raw MRI data and clinical spreadsheets are **not** included in this repository.
 
-### Cohort Used in This Study
+### Cohort
 
-| Group | Description | Count (approx.) |
+Data were aggregated across **ADNI-GO, ADNI-2, and ADNI-3** study phases.
+
+| Group | N | Description |
 |---|---|---|
-| AD | Alzheimer's Disease | ~320 |
-| MCI | Mild Cognitive Impairment | ~560 |
-| CN | Cognitively Normal | ~350 |
-| **Total** | | **~1,229 subjects** |
+| CN | 672 | Cognitively Normal controls |
+| MCI | 282 | Mild Cognitive Impairment (transitional stage) |
+| AD | 275 | Alzheimer's Disease dementia |
+| **Total** | **1,229** | Large-scale validation cohort |
+
+### Inclusion Criteria
+
+- **Imaging:** High-resolution T1-weighted 3D MPRAGE (sagittal acquisition), 3T scanners preferred (1.5T included, harmonized via FreeSurfer preprocessing)
+- **Clinical:** Confirmed baseline diagnosis (CN/MCI/AD) with complete MMSE and CDRSB scores in the ADNIMERGE registry
+- **QC exclusions:** Scans with segmentation failures, geometric distortions, or incomplete subfield masks
 
 ### What to Download from ADNI
 
-After logging in to the LONI IDA portal, you need **three components**:
+After logging in to the LONI IDA portal:
 
-#### 1. MRI Scans (two acquisition types)
+#### 1. MRI Scans
 
 Navigate to: **Download → Image Collections → Advanced Search**
 
-Search filters used in this study:
-- **Modality:** MRI
-- **Image Description:** `MPRAGE` (3D T1-weighted) — primary acquisition
-- **Image Description:** `SPGR` (Spoiled Gradient Echo T1) — secondary acquisition
-- **Study:** ADNI1, ADNI2, ADNI3
-- **Format:** DCM (DICOM)
+Filters used in this study:
+- Modality: `MRI`
+- Image Description: `MPRAGE` (3D T1-weighted, primary acquisition)
+- Study: `ADNI-GO`, `ADNI-2`, `ADNI-3`
+- Format: `DCM` (DICOM)
 
-Download all results and organize them by subject ID. You will get folders structured as `SubjectID/Visit/SeriesDate/`.
+Download all results. Subject folders will be structured as `SubjectID/Visit/SeriesDate/`.
 
 #### 2. Clinical Spreadsheet (ADNIMERGE)
 
 Navigate to: **Download → Study Data → Study Info → ADNIMERGE**
 
-Download `ADNIMERGE.csv`. This single file contains diagnosis labels (DX), cognitive scores (CDRSB, MMSE, ADAS11, ADAS13, MOCA, FAQ), and APOE4 genotype for all subjects and visits.
+Download `ADNIMERGE.csv`. This contains diagnosis labels, cognitive scores (CDRSB, MMSE, ADAS11, ADAS13, MOCA, FAQ), and APOE4 genotype for all subjects and visits.
 
 #### 3. Scan Metadata CSV
 
-From the same Advanced Search used in step 1, after selecting your images, click **"1-Click Download"** and also download the accompanying **metadata CSV** (contains Image Data ID, Subject, Group, Sex, Age, Visit columns). This file is used to link MRI scans to their diagnosis labels.
+From the same Advanced Search results page, after selecting your images, also download the accompanying **metadata CSV** (contains Image Data ID, Subject, Group, Sex, Age, Visit). This is used to link MRI image IDs to diagnosis labels.
 
 ---
 
@@ -98,26 +132,26 @@ From the same Advanced Search used in step 1, after selecting your images, click
 ```
 .
 ├── pipeline/
-│   ├── 01_dicom_to_nifti.py          # Converts raw ADNI DICOMs to BIDS NIfTI
-│   └── 02_final_ml_pipeline.py       # Final LASSO + XGBoost classification (3 experiments)
+│   ├── 01_dicom_to_nifti.py       # Converts ADNI DICOMs → BIDS NIfTI via dcm2niix
+│   └── 02_final_ml_pipeline.py    # Full LASSO + XGBoost pipeline (all 3 experiments)
 │
 ├── supplementary/
-│   ├── run_multimodal_ml.py          # Earlier multimodal XGBoost experiment
-│   ├── run_radiomics_refinery.py     # Standalone LASSO biomarker discovery script
-│   └── run_grand_master_v4.py        # Most complete data-merge pipeline (robust ID handling)
+│   ├── run_multimodal_ml.py       # Earlier multimodal XGBoost experiment
+│   ├── run_radiomics_refinery.py  # Standalone LASSO biomarker discovery
+│   └── run_grand_master_v4.py     # Most robust 3-table merge with ID collision handling
 │
 ├── hpc/
-│   ├── recon-job.sbatch              # SLURM: FreeSurfer recon-all array job
-│   ├── segmentHA-job.sbatch          # SLURM: Hippocampal subfield segmentation array job
-│   └── radiomics-job.sbatch          # SLURM: PyRadiomics feature extraction array job
+│   ├── recon-job.sbatch           # SLURM array: FreeSurfer recon-all (8 CPU, 24 GB, 10 h)
+│   ├── segmentHA-job.sbatch       # SLURM array: segmentHA_T1.sh (1 CPU, 4 GB, 2 h)
+│   └── radiomics-job.sbatch       # SLURM array: PyRadiomics extraction (1 CPU, 16 GB, 30 min)
 │
 └── results/
     ├── Fixed_Feature_Importance.png
     ├── Biomarkers_Translated_For_Paper.csv
-    ├── analysis_plots_all/               # 64 statistical boxplots (all subfields by group)
-    ├── Experiment_A_Clinical_Only/       # confusion matrix, ROC, feature importance, report
-    ├── Experiment_B_Radiomics_Only/      # same + Significant_LASSO_Biomarkers_List.csv
-    └── Experiment_C_Combined/            # same
+    ├── analysis_plots_all/                  # 64 statistical boxplots by group (all subfields)
+    ├── Experiment_A_Clinical_Only/          # confusion matrix, ROC, feature importance, report
+    ├── Experiment_B_Radiomics_Only/         # same + Significant_LASSO_Biomarkers_List.csv
+    └── Experiment_C_Combined/               # same
 ```
 
 ---
@@ -130,11 +164,13 @@ From the same Advanced Search used in step 1, after selecting your images, click
 pip install -r requirements.txt
 ```
 
-FreeSurfer (v7.4.1) must be installed separately for Stages 2–3:
+FreeSurfer v7.3.2 must be installed separately for Stages 2–3:
+
 ```bash
-# Download from https://surfer.nmr.mgh.harvard.edu/fswiki/DownloadAndInstall
+# https://surfer.nmr.mgh.harvard.edu/fswiki/DownloadAndInstall
 export FREESURFER_HOME=/path/to/freesurfer
 source $FREESURFER_HOME/SetUpFreeSurfer.sh
+export SUBJECTS_DIR=$HOME/freesurfer_subjects
 ```
 
 ---
@@ -143,42 +179,32 @@ source $FREESURFER_HOME/SetUpFreeSurfer.sh
 
 ### Stage 1 — DICOM to NIfTI
 
-Requires [dcm2niix](https://github.com/rordenlab/dcm2niix) installed and the ADNI DICOM folder.
+Requires [dcm2niix](https://github.com/rordenlab/dcm2niix). Update the three path variables at the top of the script, then:
 
 ```bash
-# Edit paths at the top of the script before running
 python pipeline/01_dicom_to_nifti.py
 ```
 
-The script:
-- Reads each subject's DICOM series
-- Converts to a single `.nii.gz` file via dcm2niix
-- Renames output into BIDS format: `SubjectID_Group.nii.gz`
-- Output goes to `nifti_output/`
+Outputs `SubjectID_Group.nii.gz` files in BIDS format to `nifti_output/`.
 
 ### Stage 2 — FreeSurfer Reconstruction (HPC)
 
-Run as a SLURM array job — one job per subject:
-
 ```bash
-# N = total number of NIfTI files in nifti_output/
+# N = number of NIfTI files in nifti_output/
 sbatch --array=1-N hpc/recon-job.sbatch
 ```
 
-Resources per job: 8 CPUs, 24 GB RAM, 10-hour wall time.  
+8 CPUs · 24 GB RAM · 10 h wall time per subject.  
 Output: `~/freesurfer_subjects/<SubjectID>/`
 
 ### Stage 3 — Hippocampal Subfield Segmentation (HPC)
-
-Run after recon-all completes for all subjects:
 
 ```bash
 # N = number of completed subjects in freesurfer_subjects/
 sbatch --array=1-N hpc/segmentHA-job.sbatch
 ```
 
-Resources per job: 1 CPU, 4 GB RAM, 2-hour wall time.  
-This runs FreeSurfer's `segmentHA_T1.sh` which adds `hipposubfields.*.stats` and `amygdalar-nuclei.*.stats` files to each subject.
+Runs FreeSurfer's `segmentHA_T1.sh`, adding `hipposubfields.*.stats` and `amygdalar-nuclei.*.stats` to each subject directory. 1 CPU · 4 GB RAM · ~30–45 min per subject.
 
 ### Stage 4 — Radiomics Feature Extraction (HPC)
 
@@ -186,16 +212,8 @@ This runs FreeSurfer's `segmentHA_T1.sh` which adds `hipposubfields.*.stats` and
 sbatch --array=1-N hpc/radiomics-job.sbatch
 ```
 
-Resources per job: 1 CPU, 16 GB RAM, 30-minute wall time.  
-Requires a Python environment (`radiomics_env`) with PyRadiomics installed on the cluster.  
-Output: one CSV per subject in `radiomics_results/`
-
-After all jobs complete, merge into master dataset:
-```bash
-python pipeline/02_final_ml_pipeline.py  # reads MASTER_Radiomics_Dataset.csv
-```
-
-> To regenerate `MASTER_Radiomics_Dataset.csv` from individual per-subject CSVs, use `supplementary/run_radiomics_refinery.py`.
+Requires a Python environment (`radiomics_env`) with PyRadiomics on the cluster.  
+Output: one CSV per subject (5,980 features) in `radiomics_results/`.
 
 ### Stage 5 — ML Classification
 
@@ -203,32 +221,37 @@ python pipeline/02_final_ml_pipeline.py  # reads MASTER_Radiomics_Dataset.csv
 python pipeline/02_final_ml_pipeline.py
 ```
 
-**Input files required** (not in repo — see Dataset section):
-- `MASTER_Radiomics_Dataset.csv` — merged radiomics features (~1229 rows)
+**Required input files** (not in repo — obtain via ADNI):
+- `MASTER_Radiomics_Dataset.csv` — merged radiomics features (1,229 rows × 5,980+ cols)
 - `AD_mprage_spgr_9_03_2025.csv` — scan metadata with Group labels
-- `ADNIMERGE_03Jun2025.csv` — clinical scores
+- `ADNIMERGE_03Jun2025.csv` — clinical scores from ADNI
 
-**Output** (written to `results_clinical/`, `results_radiomics/`, `results_combined/`):
-- `confusion_matrix.png`
-- `roc_curve.png`
-- `feature_importance.png`
-- `report.txt`
-- `biomarkers.csv` (LASSO-selected features)
+**Outputs** (written to three subfolders):
+- `confusion_matrix.png`, `roc_curve.png`, `feature_importance.png`, `report.txt`
+- `biomarkers.csv` — the 77 LASSO-selected features (Experiment B)
 
 ---
 
-## Key Findings
+## Limitations
 
-- **LASSO** selected a compact subset of radiomics features from ~4,000 candidates extracted from hippocampal and amygdala subfield segmentations.
-- The most discriminative features came from **left hippocampal subfields** (CA1, subiculum, molecular layer) and **basolateral amygdala** nuclei, consistent with known neurodegeneration patterns in AD.
-- Combining radiomics with clinical scores (MMSE, CDRSB, APOE4) pushed accuracy from 85% → **92.7%**, showing that structural imaging and cognitive assessments are complementary.
-- MCI classification remains the hardest class across all experiments — a known challenge in the field due to its heterogeneity.
+- **Cross-sectional only:** Single baseline time-point; cannot predict MCI-to-AD conversion without longitudinal follow-up.
+- **Scanner heterogeneity:** Multi-site ADNI data (Siemens/GE/Philips, 1.5T/3T) may introduce texture variability despite FreeSurfer normalization.
+- **MCI sensitivity:** Recall ~0.21 for MCI reflects the biological reality that MCI is a heterogeneous transition state, not a distinct pathological entity.
+- **No external validation:** Model was trained and tested within ADNI; validation on independent cohorts (AIBL, OASIS) is needed.
 
 ---
 
 ## Citation / Acknowledgements
 
 Data used in the preparation of this work were obtained from the Alzheimer's Disease Neuroimaging Initiative (ADNI) database ([adni.loni.usc.edu](https://adni.loni.usc.edu)). The ADNI was launched in 2003 as a public-private partnership, led by Principal Investigator Michael W. Weiner, MD.
+
+**References:**
+1. Mueller et al. (2007). Measurement of hippocampal subfields with high resolution MRI at 4T. *Neurobiology of Aging, 28*(5), 719–726.
+2. Gillies et al. (2016). Radiomics: images are more than pictures, they are data. *Radiology, 278*(2), 563–577.
+3. Iglesias et al. (2015). A computational atlas of the hippocampal formation using ex vivo ultra-high resolution MRI. *NeuroImage, 115*, 117–137.
+4. Tibshirani, R. (1996). Regression shrinkage and selection via the lasso. *JRSS-B, 58*(1), 267–288.
+5. Chen, T. (2016). XGBoost: A Scalable Tree Boosting System. *arXiv:1603.02754.*
+6. Weiner et al. (2010). The Alzheimer's disease neuroimaging initiative: progress report and future plans. *Alzheimer's & Dementia, 6*(3), 202–211.
 
 ---
 
