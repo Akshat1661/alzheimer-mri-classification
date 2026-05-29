@@ -1,0 +1,72 @@
+# ============================================================
+# DATA — never commit (ADNI restricted + too large for Git)
+# ============================================================
+
+# Raw MRI data (DICOM / NIfTI)
+AD_mprage_spgr/
+AD_mprage_spgr_metadata/
+
+# FreeSurfer full reconstruction outputs
+006_S_*/
+010_S_*/
+941_S_*/
+p_s_d/
+*/mri/
+*/surf/
+*/label/
+*/stats/
+*/touch/
+*/scripts/
+
+# Per-subject segmentation & radiomics outputs
+segmentHA_results_zip/
+radiomics_results/
+
+# Master datasets (contain patient-derived data)
+MASTER_*.csv
+ADNIMERGE_*.csv
+AD_mprage_spgr_*.csv
+*_radiomics.csv
+
+# ============================================================
+# GENERATED / INTERMEDIATE
+# ============================================================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Log / job output files
+*.out
+*.log
+slurm-*.out
+recon-*.out
+
+# ============================================================
+# EXECUTABLES & BINARIES
+# ============================================================
+*.exe
+*.mgz
+*.tar.gz
+*.gz
+*.zip
+
+# ============================================================
+# OS / EDITOR JUNK
+# ============================================================
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
+*.swo
