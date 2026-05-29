@@ -8,7 +8,7 @@ A multi-stage research pipeline for classifying Alzheimer's Disease (AD), Mild C
 
 | Experiment | Feature Set | Cohort (n) | Accuracy |
 |---|---|---|---|
-| A — Clinical Baseline | Age, Sex, APOE4, MMSE, CDRSB, ADAS, FAQ, MOCA (d=9) | 275 (validated subset) | **85.45%** |
+| A — Clinical Baseline | Age, Sex, APOE4, MMSE, CDRSB, ADAS11, ADAS13, FAQ, MOCA (d=9) | 275 (validated subset) | **85.45%** |
 | B — Radiomics Only | 77 LASSO-selected subfield texture & shape features | 1,229 (full cohort) | **73.17%** |
 | C — Combined Multimodal | Clinical (d=9) + Radiomics (d=77) → d=86 | 275 (validated subset) | **92.73%** |
 
@@ -28,6 +28,8 @@ LASSO reduced the feature space from **5,980 → 77 biomarkers** (98.7% noise re
 | 2 | Right Lateral Amygdala | FirstOrder: Maximum | 0.041 | Hyper-intense signal change, potentially reflecting gliosis |
 | 3 | Left CA3 Head | Shape: Surface-to-Volume Ratio | 0.037 | Geometric hallmark of atrophic neurodegeneration — subfield "shriveling" |
 | 4 | Left HATA | GLCM: Correlation | — | Texture degradation in the hippocampus–amygdala transition zone |
+
+> **Note on feature names:** The LASSO biomarkers CSV (`results/Experiment_B_Radiomics_Only/Significant_LASSO_Biomarkers_List.csv`) uses FreeSurfer numeric label IDs (e.g. `L_Hippo_Label7003_firstorder_Skewness`). Labels in the 7000+ range are amygdala nuclei — they appear under the `L_Hippo_` prefix because the extraction pipeline grouped all hippoAmygLabels outputs together. The anatomical names in the table above follow the FreeSurfer v7.1 probabilistic atlas.
 
 **Critical finding:** Texture features (GLCM, GLRLM) and distribution statistics (Skewness, Kurtosis) consistently outperformed volumetric features. Volume is a *late-stage* marker; texture is an *early-stage* marker — micro-structural heterogeneity is a more sensitive predictor of early AD than macroscopic shrinkage.
 
@@ -179,13 +181,22 @@ export SUBJECTS_DIR=$HOME/freesurfer_subjects
 
 ### Stage 1 — DICOM to NIfTI
 
-Requires [dcm2niix](https://github.com/rordenlab/dcm2niix). Update the three path variables at the top of the script, then:
+Requires [dcm2niix](https://github.com/rordenlab/dcm2niix). Update the **four path variables** at the top of the script before running:
+
+```python
+DCM2NIIX_PATH    = "/path/to/dcm2niix"
+RAW_MPRAGE_DICOM_DIR = "/path/to/ADNI/MPRAGE"
+ADNIMERGE_PATH   = "/path/to/AD_mprage_spgr_metadata.csv"
+BIDS_OUTPUT_DIR  = "/path/to/nifti_output"   # ← must match what recon-job.sbatch expects
+```
 
 ```bash
 python pipeline/01_dicom_to_nifti.py
 ```
 
-Outputs `SubjectID_Group.nii.gz` files in BIDS format to `nifti_output/`.
+Outputs files named `sub-{Group}_{SubjectID}_T1w.nii.gz` (e.g. `sub-AD_002_S_1081_T1w.nii.gz`) into `BIDS_OUTPUT_DIR`.
+
+> **Important:** `hpc/recon-job.sbatch` scans `$HOME/nifti_output` for input files. Set `BIDS_OUTPUT_DIR` in the script to `~/nifti_output` (or update the sbatch path) so both steps point to the same folder.
 
 ### Stage 2 — FreeSurfer Reconstruction (HPC)
 
